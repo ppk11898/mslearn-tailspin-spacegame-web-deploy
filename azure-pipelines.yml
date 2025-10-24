@@ -1,19 +1,55 @@
-jobs:
-- job: Linux
-  pool:
-    name: SecureAgents
-    vmImage: 'ubuntu-latest'
-  steps:
-  - script: echo hello from Linux
-- job: macOS
-  pool:
-    name: SecureAgents
-    vmImage: 'macOS-latest'
-  steps:
-  - script: echo hello from macOS
-- job: Windows
-  pool:
-    name: SecureAgents
-    vmImage: 'windows-latest'
-  steps:
-  - script: echo hello from Windows
+trigger:
+- main
+
+pool:
+  name: self-hosted
+  demands:
+  - agent.name -equals aks-agent-01
+
+variables:
+- group: AKS-SECRETS
+- name: ACR_NAME
+  value: myacrppk11898
+- name: IMAGE_NAME
+  value: spacegame
+- name: IMAGE_TAG
+  value: $(Build.BuildId)
+
+stages:
+- stage: Build_Push_Deploy
+  jobs:
+  - job: DoAll
+    steps:
+    - checkout: self
+
+    - script: |
+        echo "Azure SP login..."
+        az login --service-principal \
+          -u $(AZURE_CLIENT_ID) -p $(AZURE_CLIENT_SECRET) \
+          --tenant $(AZURE_TENANT_ID)
+
+        echo "ACR login..."
+        az acr login --name $(ACR_NAME)
+
+        echo "Build & push image..."
+        docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG) -f Dockerfile .
+        docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)
+      displayName: "Docker build & push to ACR"
+
+    - script: |
+        echo "Get AKS kubeconfig..."
+        az aks get-credentials -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
+
+        echo "Apply manifests (first time safe to run repeatedly)..."
+        kubectl apply -f k8s/deployment.yaml
+        kubectl apply -f k8s/service.yaml
+
+        echo "Set image to the freshly built one..."
+        kubectl set image deployment/spacegame spacegame=$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)
+
+        echo "Wait for rollout..."
+        kubectl rollout status deployment/spacegame --timeout=180s
+
+        echo "Show service..."
+        kubectl get svc spacegame-svc -o wide
+      displayName: "Deploy to AKS"
