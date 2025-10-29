@@ -85,5 +85,5 @@ stages:
             inputs:
               azureSubscription: 'Azure subscription 1(1)(538ffcb9-520e-4746-b14b-705395b6e2b6)'
               appType: 'webAppLinux'
-              appName: '$(WebAppNameStaging)'
+              appName: 'tailspin-space-game-web-dev-1838'
               package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
