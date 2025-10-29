@@ -5,8 +5,6 @@ variables:
   buildConfiguration: 'Release'
   localAgentPool: 'SecureAgents'
   azureVmImage: 'ubuntu-22.04'
-  azureSubscription: 'your-subscription'
-  webAppNameDev: 'your-webapp-dev'
 
 # ============== Build ==============
 stages:
@@ -88,4 +86,4 @@ stages:
               azureSubscription: 'Azure subscription 1(1)(538ffcb9-520e-4746-b14b-705395b6e2b6)'
               appType: 'webAppLinux'
               appName: '$(WebAppNameStaging)'
-              package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'           
+              package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
