@@ -15,9 +15,9 @@ stages:
     displayName: 'Build job'
     pool:
       name: $(localAgentPool)
-      vmImage: $(azureVmImage)
-      demands:
-      - npm
+      # vmImage: $(azureVmImage)
+      # demands:
+      # - npm
 
     variables:
       wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
@@ -28,6 +28,12 @@ stages:
       displayName: 'Use .NET SDK $(dotnetSdkVersion)'
       inputs:
         version: '$(dotnetSdkVersion)'
+
+    - task: UseNode@1
+      displayName: 'Use Node.js 18.x'
+      inputs:
+        version: '18.x'
+        checkLatest: true
 
     - task: Npm@1
       displayName: 'Run npm install'
