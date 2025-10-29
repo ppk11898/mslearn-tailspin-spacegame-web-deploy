@@ -8,28 +8,67 @@ variables:
 
 # ============== Build ==============
 stages:
-- stage: Build
-  displayName: Build
-  jobs:
-  - job: Build
-    displayName: Build on Self-Hosted
+- stage: 'Build'
+  displayName: 'Build the web application'
+  jobs: 
+  - job: 'Build'
+    displayName: 'Build job'
     pool:
-      name: $(localAgentPool)  
+      name: $(localAgentPool)
+      vmImage: $(azureVmImage)
+      demands:
+      - npm
+
+    variables:
+      wwwrootDir: 'Tailspin.SpaceGame.Web/wwwroot'
+      dotnetSdkVersion: '8.x'
+
     steps:
     - task: UseDotNet@2
+      displayName: 'Use .NET SDK $(dotnetSdkVersion)'
       inputs:
-        version: '8.x'
+        version: '$(dotnetSdkVersion)'
+
+    - task: Npm@1
+      displayName: 'Run npm install'
+      inputs:
+        verbose: false
+
+    - script: 'npx sass $(wwwrootDir):$(wwwrootDir)'
+      displayName: 'Compile Sass assets'
+
+    - task: gulp@1
+      displayName: 'Run gulp tasks'
+
+    - script: 'echo "$(Build.DefinitionName), $(Build.BuildId), $(Build.BuildNumber)" > buildinfo.txt'
+      displayName: 'Write build info'
+      workingDirectory: $(wwwrootDir)
 
     - task: DotNetCoreCLI@2
-      displayName: Publish (zip)
+      displayName: 'Restore project dependencies'
+      inputs:
+        command: 'restore'
+        projects: '**/*.csproj'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Build the project - $(buildConfiguration)'
+      inputs:
+        command: 'build'
+        arguments: '--no-restore --configuration $(buildConfiguration)'
+        projects: '**/*.csproj'
+
+    - task: DotNetCoreCLI@2
+      displayName: 'Publish the project - $(buildConfiguration)'
       inputs:
         command: 'publish'
-        publishWebProjects: true
-        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+        projects: '**/*.csproj'
+        publishWebProjects: false
+        arguments: '--no-build --configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)/$(buildConfiguration)'
         zipAfterPublish: true
 
     - publish: '$(Build.ArtifactStagingDirectory)'
       artifact: drop
+
 
 # ============== Test (Simulated) ==============
 - stage: Test
@@ -64,16 +103,18 @@ stages:
         testRunTitle: 'Simulated Tests'
 
 # ============== Deploy (Dev) ==============
-- stage: Deploy
-  displayName: Deploy to Dev
+- stage: 'Dev'
+  displayName: 'Deploy to the dev environment'
   dependsOn: Test
-  condition: succeeded()
+  condition:  succeeded()
   jobs:
-  - deployment: DeployToDev
-    displayName: Deploy on Azure Agent
-    environment: 'dev'
+  - deployment: Deploy
     pool:
-      vmImage: $(azureVmImage) 
+      name: $(localAgentPool)
+      vmImage: $(azureVmImage)
+    environment: dev
+    variables:
+    - group: Release
     strategy:
       runOnce:
         deploy:
@@ -81,9 +122,9 @@ stages:
           - download: current
             artifact: drop
           - task: AzureWebApp@1
-            displayName: 'Azure App Service Deploy: staging website'
+            displayName: 'Azure App Service Deploy: dev website'
             inputs:
-              azureSubscription: 'Azure subscription 1(1)(538ffcb9-520e-4746-b14b-705395b6e2b6)'
+              azureSubscription: 'Azure subscription 1(3)(538ffcb9-520e-4746-b14b-705395b6e2b6)'
               appType: 'webAppLinux'
-              appName: 'tailspin-space-game-web-dev-1838'
+              appName: '$(WebAppNameDev)'
               package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'
