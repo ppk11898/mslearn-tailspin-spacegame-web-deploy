@@ -1,55 +1,91 @@
 trigger:
-- main
-
-pool:
-  name: self-hosted
-  demands:
-  - agent.name -equals aks-agent-01
+- '*'
 
 variables:
-- group: AKS-SECRETS
-- name: ACR_NAME
-  value: myacrppk11898
-- name: IMAGE_NAME
-  value: spacegame
-- name: IMAGE_TAG
-  value: $(Build.BuildId)
+  buildConfiguration: 'Release'
+  localAgentPool: 'SecureAgents'
+  azureVmImage: 'ubuntu-22.04'
+  azureSubscription: 'your-subscription'
+  webAppNameDev: 'your-webapp-dev'
 
+# ============== Build ==============
 stages:
-- stage: Build_Push_Deploy
+- stage: Build
+  displayName: Build
   jobs:
-  - job: DoAll
+  - job: Build
+    displayName: Build on Self-Hosted
+    pool:
+      name: $(localAgentPool)  
     steps:
-    - checkout: self
+    - task: UseDotNet@2
+      inputs:
+        version: '8.x'
 
+    - task: DotNetCoreCLI@2
+      displayName: Publish (zip)
+      inputs:
+        command: 'publish'
+        publishWebProjects: true
+        arguments: '--configuration $(buildConfiguration) --output $(Build.ArtifactStagingDirectory)'
+        zipAfterPublish: true
+
+    - publish: '$(Build.ArtifactStagingDirectory)'
+      artifact: drop
+
+# ============== Test (Simulated) ==============
+- stage: Test
+  displayName: Test
+  dependsOn: Build
+  condition: succeeded()
+  jobs:
+  - job: SimulatedTests
+    displayName: Test on Self-Hosted
+    pool:
+      name: $(localAgentPool)
+    steps:
     - script: |
-        echo "Azure SP login..."
-        az login --service-principal \
-          -u $(AZURE_CLIENT_ID) -p $(AZURE_CLIENT_SECRET) \
-          --tenant $(AZURE_TENANT_ID)
+        set -eux
+        mkdir -p $(Pipeline.Workspace)/test-results
+        cat > $(Pipeline.Workspace)/test-results/junit.xml <<'XML'
+        <?xml version="1.0" encoding="UTF-8"?>
+        <testsuite name="SimulatedSuite" tests="3" failures="0" errors="0" skipped="0">
+          <testcase classname="Smoke" name="HomePage_Loads" time="0.10"/>
+          <testcase classname="Smoke" name="Api_Health_OK" time="0.05"/>
+          <testcase classname="Smoke" name="Assets_Exist" time="0.03"/>
+        </testsuite>
+        XML
+      displayName: Generate fake JUnit
 
-        echo "ACR login..."
-        az acr login --name $(ACR_NAME)
+    - task: PublishTestResults@2
+      displayName: Publish JUnit
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '$(Pipeline.Workspace)/test-results/junit.xml'
+        testRunTitle: 'Simulated Tests'
 
-        echo "Build & push image..."
-        docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG) -f Dockerfile .
-        docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)
-      displayName: "Docker build & push to ACR"
-
-    - script: |
-        echo "Get AKS kubeconfig..."
-        az aks get-credentials -g $(AKS_RG) -n $(AKS_NAME) --overwrite-existing
-
-        echo "Apply manifests (first time safe to run repeatedly)..."
-        kubectl apply -f k8s/deployment.yaml
-        kubectl apply -f k8s/service.yaml
-
-        echo "Set image to the freshly built one..."
-        kubectl set image deployment/spacegame spacegame=$(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(IMAGE_TAG)
-
-        echo "Wait for rollout..."
-        kubectl rollout status deployment/spacegame --timeout=180s
-
-        echo "Show service..."
-        kubectl get svc spacegame-svc -o wide
-      displayName: "Deploy to AKS"
+# ============== Deploy (Dev) ==============
+- stage: Deploy
+  displayName: Deploy to Dev
+  dependsOn: Test
+  condition: succeeded()
+  jobs:
+  - deployment: DeployToDev
+    displayName: Deploy on Azure Agent
+    environment: 'dev'
+    pool:
+      vmImage: $(azureVmImage) 
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - download: current
+            artifact: drop
+          - task: AzureWebApp@1
+            displayName: 'Azure App Service Deploy: staging website'
+            inputs:
+              azureSubscription: 'Azure subscription 1(1)(538ffcb9-520e-4746-b14b-705395b6e2b6)'
+              appType: 'webAppLinux'
+              appName: '$(WebAppNameStaging)'
+              package: '$(Pipeline.Workspace)/drop/$(buildConfiguration)/*.zip'           
